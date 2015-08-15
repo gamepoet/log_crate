@@ -1,6 +1,8 @@
 defmodule LogCrate do
   alias __MODULE__
   alias __MODULE__.Config
+  alias __MODULE__.IndexEntry
+  alias __MODULE__.Reader
   alias __MODULE__.Writer
   require Logger
   use GenServer
@@ -13,6 +15,7 @@ defmodule LogCrate do
     next_msg_id: integer,
   }
   defstruct config:            nil,
+            index:             nil,
             next_msg_id:       nil,
             in_flight_appends: nil,
             writer:            nil
@@ -40,6 +43,11 @@ defmodule LogCrate do
     GenServer.call(crate_pid, {:append, value})
   end
 
+  @spec read(pid, msg_id) :: value | :not_found | {:error, any}
+  def read(crate_pid, msg_id) do
+    GenServer.call(crate_pid, {:read, msg_id})
+  end
+
 
   #
   # GenServer callbacks
@@ -48,6 +56,7 @@ defmodule LogCrate do
   def init({init_mode, config}) do
     crate = %LogCrate{
       config:            config,
+      index:             HashDict.new,
       next_msg_id:       0,
       in_flight_appends: :queue.new,
     }
@@ -76,13 +85,26 @@ defmodule LogCrate do
     {:noreply, crate}
   end
 
+  def handle_call({:read, msg_id}, from, %LogCrate{} = crate) do
+    case Dict.get(crate.index, msg_id) do
+      nil ->
+        GenServer.reply(from, :not_found)
+
+      entry ->
+        Reader.start_link(from, crate.config.dir, 0, entry.pos, entry.size)
+    end
+
+    {:noreply, crate}
+  end
+
 
   # event from the Writer when a message has been committed to disk
-  def handle_cast({:commit, msg_id, pos, size}, %LogCrate{} = crate) do
+  def handle_cast({:did_append, msg_id, pos, size}, %LogCrate{} = crate) do
     crate = case :queue.out(crate.in_flight_appends) do
       {{:value, caller}, new_queue} ->
         GenServer.reply(caller, msg_id)
-        %{crate | in_flight_appends: new_queue}
+        new_index = Dict.put(crate.index, msg_id, IndexEntry.new(pos, size))
+        %{crate | in_flight_appends: new_queue, index: new_index}
 
       {:empty, _new_queue} ->
         Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. msg_id=#{msg_id} pos=#{pos} size=#{size}")

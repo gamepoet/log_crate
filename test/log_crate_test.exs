@@ -13,6 +13,8 @@ defmodule LogCrateTest do
     c = mk_crate
     assert 0 == LogCrate.append(c, "hello")
     assert 1 == LogCrate.append(c, "world")
+    assert "hello" == LogCrate.read(c, 0)
+    assert "world" == LogCrate.read(c, 1)
   end
 
 

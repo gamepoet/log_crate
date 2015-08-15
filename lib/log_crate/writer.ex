@@ -54,7 +54,7 @@ defmodule LogCrate.Writer do
     # write the record to disk
     writer = case IO.binwrite(writer.io, data) do
       :ok ->
-        notify(writer, {:commit, msg_id, fpos, data_size})
+        notify(writer, {:did_append, msg_id, fpos, data_size})
         %{writer | pos: writer.pos + data_size}
 
       {:error, reason} ->
