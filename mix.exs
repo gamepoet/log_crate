@@ -8,7 +8,7 @@ defmodule LogCrate.Mixfile do
       elixir: "~> 1.0",
       build_embedded: Mix.env == :prod,
       start_permanent: Mix.env == :prod,
-      deps: deps
+      deps: deps,
     ]
   end
 
@@ -29,6 +29,8 @@ defmodule LogCrate.Mixfile do
   #
   # Type `mix help deps` for more examples and options
   defp deps do
-    []
+    [
+      {:uuid, "~> 1.0", only: :test},
+    ]
   end
 end
