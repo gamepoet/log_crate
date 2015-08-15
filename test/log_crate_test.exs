@@ -6,7 +6,9 @@ defmodule LogCrateTest do
     assert LogCrate.empty?(c)
   end
 
-  test "TODO: it fails to create an empty crate if the directory exists" do
+  test "it fails to create an empty crate if the directory exists" do
+    dir = mk_tmpdir
+    assert {:error, :directory_exists} == mk_crate(dir)
   end
 
   test "it can append messages and read them back" do
@@ -20,10 +22,27 @@ defmodule LogCrateTest do
 
   # create an empty crate
   defp mk_crate do
+    mk_crate(tmpdir)
+  end
+  # creates a crate from the given directory
+  defp mk_crate(dir) do
+    case LogCrate.create(dir) do
+      {:ok, crate} ->
+        crate
+      other ->
+        other
+    end
+  end
+
+  defp tmpdir do
     dir = "#{System.tmp_dir!}/logcrate-test-#{UUID.uuid4(:hex)}"
+    on_exit(fn() -> File.rm_rf!(dir) end)
+    dir
+  end
+
+  defp mk_tmpdir do
+    dir = tmpdir
     File.mkdir_p!(dir)
-    System.at_exit(fn(_) -> File.rm_rf!(dir) end)
-    {:ok, crate} = LogCrate.create(dir)
-    crate
+    dir
   end
 end

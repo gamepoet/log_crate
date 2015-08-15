@@ -20,12 +20,16 @@ defmodule LogCrate do
             in_flight_appends: nil,
             writer:            nil
 
-  @spec create(binary) :: pid | {:error, any}
+  @spec create(binary) :: GenServer.on_start | {:error, :directory_exists}
   def create(dir) do
-    config = %Config{
-      dir: dir,
-    }
-    GenServer.start_link(__MODULE__, {:create, config})
+    if File.exists?(dir) do
+      {:error, :directory_exists}
+    else
+      config = %Config{
+        dir: dir,
+      }
+      GenServer.start_link(__MODULE__, {:create, config})
+    end
   end
 
   @spec close(pid) :: :ok
