@@ -9,7 +9,7 @@ defmodule LogCrateTest do
   test "TODO: it fails to create an empty crate if the directory exists" do
   end
 
-  test "it appends to an empty crate" do
+  test "it can append messages and read them back" do
     c = mk_crate
     assert 0 == LogCrate.append(c, "hello")
     assert 1 == LogCrate.append(c, "world")
