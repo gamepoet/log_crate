@@ -1,0 +1,2 @@
+defmodule LogCrate do
+end

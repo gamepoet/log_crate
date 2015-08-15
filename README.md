@@ -1,0 +1,4 @@
+LogCrate
+========
+
+** TODO: Add description **
