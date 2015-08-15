@@ -6,6 +6,15 @@ defmodule LogCrateTest do
     assert LogCrate.empty?(c)
   end
 
+  test "TODO: it fails to create an empty crate if the directory exists" do
+  end
+
+  test "it appends to an empty crate" do
+    c = mk_crate
+    assert 0 == LogCrate.append(c, "hello")
+    assert 1 == LogCrate.append(c, "world")
+  end
+
 
   # create an empty crate
   defp mk_crate do
