@@ -26,12 +26,7 @@ defmodule LogCrateTest do
   end
   # creates a crate from the given directory
   defp mk_crate(dir) do
-    case LogCrate.create(dir) do
-      {:ok, crate} ->
-        crate
-      other ->
-        other
-    end
+    LogCrate.create(dir)
   end
 
   defp tmpdir do
