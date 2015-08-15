@@ -11,7 +11,7 @@ defmodule LogCrateTest do
   defp mk_crate do
     dir = "#{System.tmp_dir!}/logcrate-test-#{UUID.uuid4(:hex)}"
     File.mkdir_p!(dir)
-    System.at_exit(fn(x) -> File.rm_rf!(dir) end)
+    System.at_exit(fn(_) -> File.rm_rf!(dir) end)
     {:ok, crate} = LogCrate.create(dir)
     crate
   end
