@@ -39,7 +39,7 @@ defmodule LogCrate do
 
   @spec close(pid) :: :ok
   def close(crate_pid) do
-    GenServer.call(crate_pid, :stop)
+    GenServer.call(crate_pid, :close)
   end
 
   @spec empty?(pid) :: boolean
@@ -47,7 +47,7 @@ defmodule LogCrate do
     GenServer.call(crate_pid, :empty?)
   end
 
-  @spec append(pid, value) :: msg_id | {:error, any}
+  @spec append(pid, value | [value]) :: msg_id | {:error, any}
   def append(crate_pid, value) do
     GenServer.call(crate_pid, {:append, value})
   end
@@ -72,12 +72,21 @@ defmodule LogCrate do
     {:ok, {init_mode, crate}, 0}
   end
 
+  def terminate(_reason, _state) do
+    :ok
+  end
+
   # initialization that creates a new crate
   def handle_info(:timeout, {:create, %LogCrate{} = crate}) do
     File.mkdir_p!(crate.config.dir)
     {:ok, writer} = Writer.start_link(self, crate.config)
     crate = %{crate | writer: writer}
     {:noreply, crate}
+  end
+
+  def handle_call(:close, _from, %LogCrate{} = crate) do
+    :ok = Writer.close(crate.writer)
+    {:stop, :normal, :ok, crate}
   end
 
   def handle_call(:empty?, _from, %LogCrate{} = crate) do

@@ -24,6 +24,11 @@ defmodule LogCrate.Writer do
     GenServer.cast(writer_pid, {:append, msg_id, value})
   end
 
+  @spec close(pid) :: :ok
+  def close(writer_pid) do
+    GenServer.call(writer_pid, :close)
+  end
+
 
   #
   # GenServer callbacks
@@ -37,6 +42,13 @@ defmodule LogCrate.Writer do
       io:        nil,
     }
     {:ok, writer}
+  end
+
+  def terminate(_reason, writer) do
+    unless is_nil(writer.io) do
+      File.close(writer.io)
+    end
+    :ok
   end
 
   def handle_cast({:append, msg_id, value}, %Writer{} = writer) do
@@ -63,6 +75,10 @@ defmodule LogCrate.Writer do
         writer
     end
     {:noreply, writer}
+  end
+
+  def handle_call(:close, _from, %Writer{} = writer) do
+    {:stop, :normal, :ok, writer}
   end
 
 
