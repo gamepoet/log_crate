@@ -37,6 +37,23 @@ defmodule LogCrate do
     end
   end
 
+  @spec open(binary) :: pid | GenServer.on_start | {:error, :directory_missing}
+  def open(dir) do
+    if File.exists?(dir) do
+      config = %Config{
+        dir: dir,
+      }
+      case GenServer.start_link(__MODULE__, {:open, config}) do
+        {:ok, pid} ->
+          pid
+        other ->
+          other
+      end
+    else
+      {:error, :directory_missing}
+    end
+  end
+
   @spec close(pid) :: :ok
   def close(crate_pid) do
     GenServer.call(crate_pid, :close)
@@ -81,6 +98,19 @@ defmodule LogCrate do
     File.mkdir_p!(crate.config.dir)
     {:ok, writer} = Writer.start_link(self, crate.config)
     crate = %{crate | writer: writer}
+    {:noreply, crate}
+  end
+
+  # initialization that opens an existing crate
+  def handle_info(:timeout, {:open, %LogCrate{} = crate}) do
+    # scan the directory for existing segments
+    {:ok, files} = File.ls(crate.config.dir)
+    index = Enum.reduce(files, crate.index, fn(file, index) ->
+      load_segment(index, Path.join(crate.config.dir, file))
+    end)
+
+    {:ok, writer} = Writer.start_link(self, crate.config)
+    crate = %{crate | index: index, writer: writer}
     {:noreply, crate}
   end
 
@@ -135,5 +165,72 @@ defmodule LogCrate do
   # event from the Writer when it has rolled over to a new segment
   def handle_cast({:roll, _new_segment_id}, %LogCrate{} = crate) do
     {:noreply, crate}
+  end
+
+
+  defp load_segment(index, filename) do
+    {:ok, io} = File.open(filename, [:read])
+    file_header = IO.binread(io, 20)
+    <<
+      magic       ::binary-size(8),
+      version     ::integer-size(32),
+      segment_id  ::integer-size(64),
+    >> = file_header
+
+    # verify the header
+    "logcrate" = magic
+    1          = version
+    0          = segment_id
+
+    msg_id = segment_id
+    index = case load_message(index, io, msg_id) do
+      {:error, _} = err ->
+        err
+      index ->
+        index
+    end
+
+    :ok = File.close(io)
+    index
+  end
+
+  def load_message(index, io, msg_id) do
+    {:ok, pos} = :file.position(io, :cur)
+    case read_message_size(io) do
+      {:error, {:corrupt, :eof}} ->
+        index
+      {:error, _} = err ->
+        err
+      msg_size ->
+        case read_message_content(io, msg_size) do
+          {:error, _} = err ->
+            err
+          _msg_content ->
+            index = Dict.put(index, msg_id, IndexEntry.new(pos, msg_size + 4))
+            load_message(index, io, msg_id + 1)
+        end
+    end
+  end
+
+  def read_message_size(io) do
+    case IO.binread(io, 4) do
+      {:error, _} = err ->
+        err
+      :eof ->
+        {:error, {:corrupt, :eof}}
+      <<msg_size::integer-size(32)>> ->
+        msg_size
+    end
+  end
+
+  def read_message_content(io, msg_size) do
+    case IO.binread(io, msg_size) do
+      {:error, _} = err ->
+        err
+      :eof ->
+        {:error, {:corrupt, :eof}}
+      data ->
+        data
+    end
   end
 end

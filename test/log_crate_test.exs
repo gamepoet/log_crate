@@ -21,18 +21,23 @@ defmodule LogCrateTest do
     end)
   end
 
-#  test "it opens saved crates" do
-#    dir = tmpdir
-#    with_new_crate(dir, fn(c) ->
-#      0 = LogCrate.append(c, "some")
-#      1 = LogCrate.append(c, "data")
-#    end)
-#
-#    c = LogCrate.open(dir)
-#    assert "some" == LogCrate.read(c, 0)
-#    assert "data" == LogCrate.read(c, 1)
-#    assert :ok == LogCrate.close(c)
-#  end
+  test "it opens saved crates" do
+    dir = tmpdir
+    with_new_crate(dir, fn(c) ->
+      0 = LogCrate.append(c, "some")
+      1 = LogCrate.append(c, "data")
+    end)
+
+    c = LogCrate.open(dir)
+    assert "some" == LogCrate.read(c, 0)
+    assert "data" == LogCrate.read(c, 1)
+    assert :ok == LogCrate.close(c)
+  end
+
+  test "it fails to open a crate if the directory doesn't exist" do
+    dir = tmpdir
+    assert {:error, :directory_missing} == LogCrate.open(dir)
+  end
 
 #  test "it can append messages in batches" do
 #    c = with_new_crate(fn(c) ->

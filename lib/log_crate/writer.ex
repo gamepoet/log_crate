@@ -98,12 +98,23 @@ defmodule LogCrate.Writer do
     basename = :io_lib.format("~16.16.0b.dat", [msg_id]) |> IO.iodata_to_binary
     path = "#{writer.config.dir}/#{basename}"
     {:ok, io} = File.open(path, [:write])
+    header = file_header(msg_id)
+    :ok = IO.binwrite(io, header)
 
     notify(writer, {:roll, msg_id})
-    %{writer | io: io, pos: 0}
+    %{writer | io: io, pos: byte_size(header)}
   end
 
   defp notify(writer, evt) do
     GenServer.cast(writer.crate_pid, evt)
   end
+
+  defp file_header(segment_id) do
+    <<
+      "logcrate"    ::binary,           # magic
+      1             ::integer-size(32), # version
+      segment_id    ::integer-size(64), # segment id
+    >>
+  end
+
 end
