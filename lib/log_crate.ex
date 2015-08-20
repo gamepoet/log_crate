@@ -7,16 +7,16 @@ defmodule LogCrate do
   require Logger
   use GenServer
 
-  @type msg_id :: integer
+  @type record_id :: integer
   @type value :: binary
 
   @opaque t :: %__MODULE__{
-    config:      Config.t,
-    next_msg_id: integer,
+    config:         Config.t,
+    next_record_id: integer,
   }
   defstruct config:            nil,
             index:             nil,
-            next_msg_id:       nil,
+            next_record_id:    nil,
             in_flight_appends: nil,
             writer:            nil
 
@@ -60,14 +60,14 @@ defmodule LogCrate do
     GenServer.call(crate_pid, :empty?)
   end
 
-  @spec append(pid, value | [value]) :: msg_id | {:error, any}
+  @spec append(pid, value | [value]) :: record_id | {:error, any}
   def append(crate_pid, value) do
     GenServer.call(crate_pid, {:append, value})
   end
 
-  @spec read(pid, msg_id) :: value | :not_found | {:error, any}
-  def read(crate_pid, msg_id) do
-    GenServer.call(crate_pid, {:read, msg_id})
+  @spec read(pid, record_id) :: value | :not_found | {:error, any}
+  def read(crate_pid, record_id) do
+    GenServer.call(crate_pid, {:read, record_id})
   end
 
 
@@ -79,7 +79,7 @@ defmodule LogCrate do
     crate = %LogCrate{
       config:            config,
       index:             HashDict.new,
-      next_msg_id:       0,
+      next_record_id:       0,
       in_flight_appends: :queue.new,
     }
     {:ok, {init_mode, crate}, 0}
@@ -122,16 +122,16 @@ defmodule LogCrate do
   end
 
   def handle_call({:append, value}, from, %LogCrate{} = crate) do
-    msg_id = crate.next_msg_id
-    Writer.append(crate.writer, msg_id, value)
+    record_id = crate.next_record_id
+    Writer.append(crate.writer, record_id, value)
     new_queue = :queue.in(from, crate.in_flight_appends)
-    crate = %{crate | next_msg_id: crate.next_msg_id + 1, in_flight_appends: new_queue}
+    crate = %{crate | next_record_id: crate.next_record_id + 1, in_flight_appends: new_queue}
 
     {:noreply, crate}
   end
 
-  def handle_call({:read, msg_id}, from, %LogCrate{} = crate) do
-    case Dict.get(crate.index, msg_id) do
+  def handle_call({:read, record_id}, from, %LogCrate{} = crate) do
+    case Dict.get(crate.index, record_id) do
       nil ->
         GenServer.reply(from, :not_found)
 
@@ -143,16 +143,16 @@ defmodule LogCrate do
   end
 
 
-  # event from the Writer when a message has been committed to disk
-  def handle_cast({:did_append, segment_id, msg_id, pos, size}, %LogCrate{} = crate) do
+  # event from the Writer when a record has been committed to disk
+  def handle_cast({:did_append, segment_id, record_id, pos, size}, %LogCrate{} = crate) do
     crate = case :queue.out(crate.in_flight_appends) do
       {{:value, caller}, new_queue} ->
-        GenServer.reply(caller, msg_id)
-        new_index = Dict.put(crate.index, msg_id, IndexEntry.new(segment_id, pos, size))
+        GenServer.reply(caller, record_id)
+        new_index = Dict.put(crate.index, record_id, IndexEntry.new(segment_id, pos, size))
         %{crate | in_flight_appends: new_queue, index: new_index}
 
       {:empty, _new_queue} ->
-        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} msg_id=#{msg_id} pos=#{pos} size=#{size}")
+        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} record_id=#{record_id} pos=#{pos} size=#{size}")
         throw(:bug)
     end
 
@@ -178,8 +178,8 @@ defmodule LogCrate do
     "logcrate" = magic
     1          = version
 
-    msg_id = segment_id
-    index = case load_message(index, io, segment_id, msg_id) do
+    record_id = segment_id
+    index = case load_record(index, io, segment_id, record_id) do
       {:error, _} = err ->
         err
       index ->
@@ -190,37 +190,37 @@ defmodule LogCrate do
     {index, segment_id}
   end
 
-  def load_message(index, io, segment_id, msg_id) do
+  def load_record(index, io, segment_id, record_id) do
     {:ok, pos} = :file.position(io, :cur)
-    case read_message_size(io) do
+    case read_record_size(io) do
       {:error, {:corrupt, :eof}} ->
         index
       {:error, _} = err ->
         err
-      msg_size ->
-        case read_message_content(io, msg_size) do
+      record_size ->
+        case read_record_content(io, record_size) do
           {:error, _} = err ->
             err
-          _msg_content ->
-            index = Dict.put(index, msg_id, IndexEntry.new(segment_id, pos, msg_size + 4))
-            load_message(index, io, segment_id, msg_id + 1)
+          _record_content ->
+            index = Dict.put(index, record_id, IndexEntry.new(segment_id, pos, record_size + 4))
+            load_record(index, io, segment_id, record_id + 1)
         end
     end
   end
 
-  def read_message_size(io) do
+  def read_record_size(io) do
     case IO.binread(io, 4) do
       {:error, _} = err ->
         err
       :eof ->
         {:error, {:corrupt, :eof}}
-      <<msg_size::integer-size(32)>> ->
-        msg_size
+      <<record_size::integer-size(32)>> ->
+        record_size
     end
   end
 
-  def read_message_content(io, msg_size) do
-    case IO.binread(io, msg_size) do
+  def read_record_content(io, record_size) do
+    case IO.binread(io, record_size) do
       {:error, _} = err ->
         err
       :eof ->

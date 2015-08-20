@@ -12,7 +12,7 @@ defmodule LogCrateTest do
     assert {:error, :directory_exists} == mk_crate(dir)
   end
 
-  test "it can append messages and read them back" do
+  test "it can append records and read them back" do
     with_new_crate(fn(c) ->
       assert 0 == LogCrate.append(c, "hello")
       assert 1 == LogCrate.append(c, "world")
@@ -39,9 +39,9 @@ defmodule LogCrateTest do
     assert {:error, :directory_missing} == LogCrate.open(dir)
   end
 
-#  test "it can append messages in batches" do
+#  test "it can append records in batches" do
 #    c = with_new_crate(fn(c) ->
-#      assert [0,1,2,3] == LogCrate.append(c, ["a", "batch", "of", "messages"])
+#      assert [0,1,2,3] == LogCrate.append(c, ["a", "batch", "of", "records"])
 #    end)
 #  end
 

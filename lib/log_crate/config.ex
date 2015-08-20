@@ -1,7 +1,7 @@
 defmodule LogCrate.Config do
   @opaque t :: %__MODULE__{
-    dir: binary,
-
+    dir:              binary,
+    segment_max_size: integer,
   }
   defstruct dir:              nil,
             segment_max_size: nil

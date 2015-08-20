@@ -2,7 +2,7 @@
 
 An append-only data key-value storage (i.e. a log file) module for Elixir. Appends are made sequentially but random reads can be made in parallel.
 
-A crate assumes control over a directory in which it maintains a set of files that are segments of the stored messages. At configurable time and/or size intervals, old segments are removed to reclaim space. Each record stored in the crate is assigned an integer id which increases linearly as records added.
+A crate assumes control over a directory in which it maintains a set of files that are segments of the stored records. At configurable time and/or size intervals, old segments are removed to reclaim space. Each record stored in the crate is assigned an integer id which increases linearly as records added.
 
 ## Usage
 

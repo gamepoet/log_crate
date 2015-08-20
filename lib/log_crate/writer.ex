@@ -21,8 +21,8 @@ defmodule LogCrate.Writer do
   end
 
   @spec append(pid, integer, binary) :: :ok
-  def append(writer_pid, msg_id, value) do
-    GenServer.cast(writer_pid, {:append, msg_id, value})
+  def append(writer_pid, record_id, value) do
+    GenServer.cast(writer_pid, {:append, record_id, value})
   end
 
   @spec close(pid) :: :ok
@@ -64,14 +64,14 @@ defmodule LogCrate.Writer do
     {:noreply, writer}
   end
 
-  def handle_cast({:append, msg_id, value}, %Writer{} = writer) do
+  def handle_cast({:append, record_id, value}, %Writer{} = writer) do
     # prepare the record
     header = <<byte_size(value)::size(32)>>
     data = [header, value]
     data_size = byte_size(header) + byte_size(value)
 
     # roll a new segment if needed
-    writer = maybe_roll(writer, msg_id, data_size)
+    writer = maybe_roll(writer, record_id, data_size)
 
     # figure out where we are in the file
     fpos = writer.pos
@@ -79,12 +79,12 @@ defmodule LogCrate.Writer do
     # write the record to disk
     writer = case IO.binwrite(writer.io, data) do
       :ok ->
-        notify(writer, {:did_append, writer.segment_id, msg_id, fpos, data_size})
+        notify(writer, {:did_append, writer.segment_id, record_id, fpos, data_size})
         %{writer | pos: writer.pos + data_size}
 
       {:error, reason} ->
         Logger.error "Failed to write value #{inspect reason}"
-        notify(writer, {:error_append, msg_id, reason})
+        notify(writer, {:error_append, record_id, reason})
         writer
     end
     {:noreply, writer}
@@ -95,23 +95,23 @@ defmodule LogCrate.Writer do
   end
 
 
-  defp maybe_roll(%Writer{io: nil} = writer, msg_id, _size) do
-    roll(writer, msg_id)
+  defp maybe_roll(%Writer{io: nil} = writer, record_id, _size) do
+    roll(writer, record_id)
   end
-  defp maybe_roll(writer, msg_id, size) do
+  defp maybe_roll(writer, record_id, size) do
     if writer.pos + size > writer.config.segment_max_size do
-      roll(writer, msg_id)
+      roll(writer, record_id)
     else
       writer
     end
   end
 
-  defp roll(writer, msg_id) do
+  defp roll(writer, record_id) do
     unless is_nil(writer.io) do
       :ok = File.close(writer.io)
     end
 
-    segment_id = msg_id
+    segment_id = record_id
     {:ok, io} = File.open(segment_filename(writer.config.dir, segment_id), [:write])
     header = file_header(segment_id)
     :ok = IO.binwrite(io, header)
