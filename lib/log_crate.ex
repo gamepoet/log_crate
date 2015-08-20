@@ -1,4 +1,13 @@
 defmodule LogCrate do
+  @moduledoc """
+  LogCrate is an append-only log-structured storage module that persists to
+  disk. Records appended to the crate are each given an sequentially increasing
+  id that can be used to later retrieve that record.
+
+  LogCrate manages a directory on disk that contains files containing the
+  records persisted to disk. Records are appended to the "current" segment file
+  until it reached a maximum size at which point a new segment file is rolled.
+  """
   alias __MODULE__
   alias __MODULE__.Config
   alias __MODULE__.IndexEntry
@@ -20,6 +29,18 @@ defmodule LogCrate do
             in_flight_appends: nil,
             writer:            nil
 
+  @doc """
+  Creates a new, empty log crate at the given directory. This spawns a GenServer
+  to manage that crate and links it to the current process.
+
+  Options:
+    * `:segment_max_size` - the maximum byte size a segment is allowed to grow
+      to before a new segment is rolled
+
+  Returns:
+    * `crate` - the pid of the newly created crate process
+    * `{:error, :directory_exists}` - creation failed because the destination directory already exists
+  """
   @spec create(binary, Keyword.t) :: pid | GenServer.on_start | {:error, :directory_exists}
   def create(dir, opts \\ []) do
     if File.exists?(dir) do
@@ -35,6 +56,18 @@ defmodule LogCrate do
     end
   end
 
+  @doc """
+  Opens an existing log crate at the given directory. This spawns a GenServer to
+  manages that crate and links it to the current process.
+
+  Options:
+    * `:segment_max_size` - the maximum byte size a segment is allowed to grow
+      to before a new segment is rolled
+
+  Returns:
+    * `crate` - the pid of the newly created crate process
+    * `{:error, :directory_exists}` - creation failed because the destination directory already exists
+  """
   @spec open(binary, Keyword.t) :: pid | GenServer.on_start | {:error, :directory_missing}
   def open(dir, opts \\ []) do
     if File.exists?(dir) do
@@ -50,21 +83,49 @@ defmodule LogCrate do
     end
   end
 
+  @doc """
+  Closes the given crate and waits for it to close.
+
+  Returns:
+    * `:ok`
+  """
   @spec close(pid) :: :ok
   def close(crate_pid) do
     GenServer.call(crate_pid, :close)
   end
 
+  @doc """
+  Tests if the given crate is empty.
+
+  Returns:
+    * true if the crate is empty
+    * false otherwise
+  """
   @spec empty?(pid) :: boolean
   def empty?(crate_pid) do
     GenServer.call(crate_pid, :empty?)
   end
 
-  @spec append(pid, value | [value]) :: record_id | {:error, any}
+  @doc """
+  Appends the given value to the crate and assigns it a record id.
+
+  Returns:
+    * `record_id` - the id assigned to the record if successful
+    * `{:error, reason}` - appending was unsuccessful
+  """
+  @spec append(pid, value) :: record_id | {:error, any}
   def append(crate_pid, value) do
     GenServer.call(crate_pid, {:append, value})
   end
 
+  @doc """
+  Retrieves the value of the record stored with the given record id.
+
+  Returns:
+    * `value` - the value stored in the record if successful
+    * `:not_found` - there is no record for the requested id in the crate
+    * `{:error, reason}` - the read was unsuccessful
+  """
   @spec read(pid, record_id) :: value | :not_found | {:error, any}
   def read(crate_pid, record_id) do
     GenServer.call(crate_pid, {:read, record_id})
@@ -190,7 +251,7 @@ defmodule LogCrate do
     {index, segment_id}
   end
 
-  def load_record(index, io, segment_id, record_id) do
+  defp load_record(index, io, segment_id, record_id) do
     {:ok, pos} = :file.position(io, :cur)
     case read_record_size(io) do
       {:error, {:corrupt, :eof}} ->
@@ -208,7 +269,7 @@ defmodule LogCrate do
     end
   end
 
-  def read_record_size(io) do
+  defp read_record_size(io) do
     case IO.binread(io, 4) do
       {:error, _} = err ->
         err
@@ -219,7 +280,7 @@ defmodule LogCrate do
     end
   end
 
-  def read_record_content(io, record_size) do
+  defp read_record_content(io, record_size) do
     case IO.binread(io, record_size) do
       {:error, _} = err ->
         err

@@ -6,6 +6,8 @@ defmodule LogCrate.Mixfile do
       app: :log_crate,
       version: "0.0.1",
       elixir: "~> 1.0",
+      name: "LogCrate",
+      source_url: "https://github.com/gamepoet/log_crate",
       build_embedded: Mix.env == :prod,
       start_permanent: Mix.env == :prod,
       deps: deps,
@@ -30,7 +32,9 @@ defmodule LogCrate.Mixfile do
   # Type `mix help deps` for more examples and options
   defp deps do
     [
-      {:uuid, "~> 1.0", only: :test},
+      {:earmark,  ">= 0.0.0", only: :dev},
+      {:ex_doc,   "~> 0.8", only: :dev},
+      {:uuid,     "~> 1.0", only: :test},
     ]
   end
 end
