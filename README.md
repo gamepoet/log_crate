@@ -13,12 +13,13 @@ crate = LogCrate.create("./my_crate")
 LogCrate.append(crate, "whatever")
 # => 0
 
-LogCrate.append(crate, ["a", "batch", "of", "records"])
-# => [1, 2, 3, 4]
-
+LogCrate.append(crate, "a")
+LogCrate.append(crate, "bunch")
+LogCrate.append(crate, "of")
+LogCrate.append(crate, "records")
 LogCrate.read(crate, 2)
-# => "batch"
+# => "bunch"
 
-LogCrate.read(crate, 2, 4)
-# => ["batch", "of", "records"]
+LogCrate.read(crate, 4)
+# => "records"
 ```
