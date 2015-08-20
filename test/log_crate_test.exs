@@ -45,22 +45,50 @@ defmodule LogCrateTest do
 #    end)
 #  end
 
+  test "it rolls a new segment when the max size is exceeded" do
+    dir = tmpdir
+    with_new_crate(dir, [segment_max_size: 8], fn(c) ->
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 1 == File.ls!("#{dir}/") |> Enum.count
+      assert 1 == LogCrate.append(c, "lots and lots more data to push us over");
+      assert 2 == File.ls!("#{dir}/") |> Enum.count
+
+      assert "0123456" == LogCrate.read(c, 0)
+      assert "lots and lots more data to push us over" == LogCrate.read(c, 1)
+    end)
+  end
+
+  test "it properly opens crates with multiple segments" do
+    dir = tmpdir
+    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 1 == LogCrate.append(c, "789abcd")
+      assert 1 == File.ls!("#{dir}/") |> Enum.count
+      assert 2 == LogCrate.append(c, "something much larger")
+    end)
+
+    c = LogCrate.open(dir)
+    assert "0123456" == LogCrate.read(c, 0)
+    assert "789abcd" == LogCrate.read(c, 1)
+    assert "something much larger" == LogCrate.read(c, 2)
+    assert :ok == LogCrate.close(c)
+  end
 
   # create an empty crate
 #  defp mk_crate do
 #    mk_crate(tmpdir)
 #  end
   # creates a crate from the given directory
-  defp mk_crate(dir) when is_binary(dir) do
-    LogCrate.create(dir)
+  defp mk_crate(dir, opts \\ []) when is_binary(dir) do
+    LogCrate.create(dir, opts)
   end
 
   defp with_new_crate(func) when is_function(func, 1) do
     with_new_crate(tmpdir, func)
   end
 
-  defp with_new_crate(dir, func) when is_binary(dir) and is_function(func, 1) do
-    c = mk_crate(dir)
+  defp with_new_crate(dir, opts \\ [], func) when is_binary(dir) and is_function(func, 1) do
+    c = mk_crate(dir, opts)
     if is_pid(c) do
       try do
         func.(c)

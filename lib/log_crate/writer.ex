@@ -9,14 +9,15 @@ defmodule LogCrate.Writer do
   use GenServer
 
   @opaque t :: %__MODULE__{}
-  defstruct crate_pid: nil,
-            config:    nil,
-            pos:       nil,
-            io:        nil
+  defstruct crate_pid:  nil,
+            config:     nil,
+            segment_id: nil,
+            pos:        nil,
+            io:         nil
 
-  @spec start_link(pid, Config.t) :: GenServer.on_start
-  def start_link(crate_pid, config) do
-    GenServer.start_link(__MODULE__, {crate_pid, config})
+  @spec start_link(pid, Config.t, :create | :open, integer) :: GenServer.on_start
+  def start_link(crate_pid, config, mode, segment_id) do
+    GenServer.start_link(__MODULE__, {crate_pid, config, mode, segment_id})
   end
 
   @spec append(pid, integer, binary) :: :ok
@@ -34,14 +35,15 @@ defmodule LogCrate.Writer do
   # GenServer callbacks
   #
 
-  def init({crate_pid, config}) do
+  def init({crate_pid, config, mode, segment_id}) do
     writer = %Writer{
-      crate_pid: crate_pid,
-      config:    config,
-      pos:       0,
-      io:        nil,
+      crate_pid:  crate_pid,
+      config:     config,
+      segment_id: segment_id,
+      pos:        0,
+      io:         nil,
     }
-    {:ok, writer}
+    {:ok, {writer, mode, segment_id}, 0}
   end
 
   def terminate(_reason, writer) do
@@ -49,6 +51,17 @@ defmodule LogCrate.Writer do
       File.close(writer.io)
     end
     :ok
+  end
+
+  def handle_info(:timeout, {%Writer{} = writer, :create, 0}) do
+    {:noreply, writer}
+  end
+
+  def handle_info(:timeout, {%Writer{} = writer, :open, segment_id}) do
+    {:ok, io} = File.open(segment_filename(writer.config.dir, segment_id), [:read, :write])
+    {:ok, pos} = :file.position(io, :eof)
+    writer = %{writer | io: io, pos: pos}
+    {:noreply, writer}
   end
 
   def handle_cast({:append, msg_id, value}, %Writer{} = writer) do
@@ -66,7 +79,7 @@ defmodule LogCrate.Writer do
     # write the record to disk
     writer = case IO.binwrite(writer.io, data) do
       :ok ->
-        notify(writer, {:did_append, msg_id, fpos, data_size})
+        notify(writer, {:did_append, writer.segment_id, msg_id, fpos, data_size})
         %{writer | pos: writer.pos + data_size}
 
       {:error, reason} ->
@@ -85,9 +98,12 @@ defmodule LogCrate.Writer do
   defp maybe_roll(%Writer{io: nil} = writer, msg_id, _size) do
     roll(writer, msg_id)
   end
-  defp maybe_roll(writer, _msg_id, _size) do
-    # TODO: support rolling over to new segments
-    writer
+  defp maybe_roll(writer, msg_id, size) do
+    if writer.pos + size > writer.config.segment_max_size do
+      roll(writer, msg_id)
+    else
+      writer
+    end
   end
 
   defp roll(writer, msg_id) do
@@ -95,18 +111,22 @@ defmodule LogCrate.Writer do
       :ok = File.close(writer.io)
     end
 
-    basename = :io_lib.format("~16.16.0b.dat", [msg_id]) |> IO.iodata_to_binary
-    path = "#{writer.config.dir}/#{basename}"
-    {:ok, io} = File.open(path, [:write])
-    header = file_header(msg_id)
+    segment_id = msg_id
+    {:ok, io} = File.open(segment_filename(writer.config.dir, segment_id), [:write])
+    header = file_header(segment_id)
     :ok = IO.binwrite(io, header)
 
-    notify(writer, {:roll, msg_id})
-    %{writer | io: io, pos: byte_size(header)}
+    notify(writer, {:did_roll, segment_id})
+    %{writer | io: io, segment_id: segment_id, pos: byte_size(header)}
   end
 
   defp notify(writer, evt) do
     GenServer.cast(writer.crate_pid, evt)
+  end
+
+  defp segment_filename(dir, segment_id) do
+    basename = :io_lib.format("~16.16.0b.dat", [segment_id]) |> IO.iodata_to_binary
+    "#{dir}/#{basename}"
   end
 
   defp file_header(segment_id) do

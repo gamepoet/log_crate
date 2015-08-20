@@ -20,14 +20,12 @@ defmodule LogCrate do
             in_flight_appends: nil,
             writer:            nil
 
-  @spec create(binary) :: pid | GenServer.on_start | {:error, :directory_exists}
-  def create(dir) do
+  @spec create(binary, Keyword.t) :: pid | GenServer.on_start | {:error, :directory_exists}
+  def create(dir, opts \\ []) do
     if File.exists?(dir) do
       {:error, :directory_exists}
     else
-      config = %Config{
-        dir: dir,
-      }
+      config = Config.new(dir, opts)
       case GenServer.start_link(__MODULE__, {:create, config}) do
         {:ok, pid} ->
           pid
@@ -37,12 +35,10 @@ defmodule LogCrate do
     end
   end
 
-  @spec open(binary) :: pid | GenServer.on_start | {:error, :directory_missing}
-  def open(dir) do
+  @spec open(binary, Keyword.t) :: pid | GenServer.on_start | {:error, :directory_missing}
+  def open(dir, opts \\ []) do
     if File.exists?(dir) do
-      config = %Config{
-        dir: dir,
-      }
+      config = Config.new(dir, opts)
       case GenServer.start_link(__MODULE__, {:open, config}) do
         {:ok, pid} ->
           pid
@@ -96,7 +92,7 @@ defmodule LogCrate do
   # initialization that creates a new crate
   def handle_info(:timeout, {:create, %LogCrate{} = crate}) do
     File.mkdir_p!(crate.config.dir)
-    {:ok, writer} = Writer.start_link(self, crate.config)
+    {:ok, writer} = Writer.start_link(self, crate.config, :create, 0)
     crate = %{crate | writer: writer}
     {:noreply, crate}
   end
@@ -105,11 +101,12 @@ defmodule LogCrate do
   def handle_info(:timeout, {:open, %LogCrate{} = crate}) do
     # scan the directory for existing segments
     {:ok, files} = File.ls(crate.config.dir)
-    index = Enum.reduce(files, crate.index, fn(file, index) ->
+    files = Enum.sort(files)
+    {index, final_segment_id} = Enum.reduce(files, {crate.index, nil}, fn(file, {index, _final_segment_id}) ->
       load_segment(index, Path.join(crate.config.dir, file))
     end)
 
-    {:ok, writer} = Writer.start_link(self, crate.config)
+    {:ok, writer} = Writer.start_link(self, crate.config, :open, final_segment_id)
     crate = %{crate | index: index, writer: writer}
     {:noreply, crate}
   end
@@ -139,7 +136,7 @@ defmodule LogCrate do
         GenServer.reply(from, :not_found)
 
       entry ->
-        Reader.start_link(from, crate.config.dir, 0, entry.pos, entry.size)
+        Reader.start_link(from, crate.config.dir, entry.segment_id, entry.pos, entry.size)
     end
 
     {:noreply, crate}
@@ -147,15 +144,15 @@ defmodule LogCrate do
 
 
   # event from the Writer when a message has been committed to disk
-  def handle_cast({:did_append, msg_id, pos, size}, %LogCrate{} = crate) do
+  def handle_cast({:did_append, segment_id, msg_id, pos, size}, %LogCrate{} = crate) do
     crate = case :queue.out(crate.in_flight_appends) do
       {{:value, caller}, new_queue} ->
         GenServer.reply(caller, msg_id)
-        new_index = Dict.put(crate.index, msg_id, IndexEntry.new(pos, size))
+        new_index = Dict.put(crate.index, msg_id, IndexEntry.new(segment_id, pos, size))
         %{crate | in_flight_appends: new_queue, index: new_index}
 
       {:empty, _new_queue} ->
-        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. msg_id=#{msg_id} pos=#{pos} size=#{size}")
+        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} msg_id=#{msg_id} pos=#{pos} size=#{size}")
         throw(:bug)
     end
 
@@ -163,7 +160,7 @@ defmodule LogCrate do
   end
 
   # event from the Writer when it has rolled over to a new segment
-  def handle_cast({:roll, _new_segment_id}, %LogCrate{} = crate) do
+  def handle_cast({:did_roll, _new_segment_id}, %LogCrate{} = crate) do
     {:noreply, crate}
   end
 
@@ -180,10 +177,9 @@ defmodule LogCrate do
     # verify the header
     "logcrate" = magic
     1          = version
-    0          = segment_id
 
     msg_id = segment_id
-    index = case load_message(index, io, msg_id) do
+    index = case load_message(index, io, segment_id, msg_id) do
       {:error, _} = err ->
         err
       index ->
@@ -191,10 +187,10 @@ defmodule LogCrate do
     end
 
     :ok = File.close(io)
-    index
+    {index, segment_id}
   end
 
-  def load_message(index, io, msg_id) do
+  def load_message(index, io, segment_id, msg_id) do
     {:ok, pos} = :file.position(io, :cur)
     case read_message_size(io) do
       {:error, {:corrupt, :eof}} ->
@@ -206,8 +202,8 @@ defmodule LogCrate do
           {:error, _} = err ->
             err
           _msg_content ->
-            index = Dict.put(index, msg_id, IndexEntry.new(pos, msg_size + 4))
-            load_message(index, io, msg_id + 1)
+            index = Dict.put(index, msg_id, IndexEntry.new(segment_id, pos, msg_size + 4))
+            load_message(index, io, segment_id, msg_id + 1)
         end
     end
   end
