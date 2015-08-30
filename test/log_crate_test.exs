@@ -31,6 +31,7 @@ defmodule LogCrateTest do
     c = LogCrate.open(dir)
     assert "some" == LogCrate.read(c, 0)
     assert "data" == LogCrate.read(c, 1)
+    assert 2 == LogCrate.append(c, "more!")
     assert :ok == LogCrate.close(c)
   end
 

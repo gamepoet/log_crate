@@ -163,12 +163,12 @@ defmodule LogCrate do
     # scan the directory for existing segments
     {:ok, files} = File.ls(crate.config.dir)
     files = Enum.sort(files)
-    {index, final_segment_id} = Enum.reduce(files, {crate.index, nil}, fn(file, {index, _final_segment_id}) ->
+    {index, final_segment_id, final_record_id} = Enum.reduce(files, {crate.index, nil, nil}, fn(file, {index, _final_segment_id, _final_record_id}) ->
       load_segment(index, Path.join(crate.config.dir, file))
     end)
 
     {:ok, writer} = Writer.start_link(self, crate.config, :open, final_segment_id)
-    crate = %{crate | index: index, writer: writer}
+    crate = %{crate | index: index, next_record_id: final_record_id + 1, writer: writer}
     {:noreply, crate}
   end
 
@@ -240,22 +240,22 @@ defmodule LogCrate do
     1          = version
 
     record_id = segment_id
-    index = case load_record(index, io, segment_id, record_id) do
+    {index, final_record_id} = case load_record(index, io, segment_id, record_id) do
       {:error, _} = err ->
         err
-      index ->
-        index
+      result ->
+        result
     end
 
     :ok = File.close(io)
-    {index, segment_id}
+    {index, segment_id, final_record_id}
   end
 
   defp load_record(index, io, segment_id, record_id) do
     {:ok, pos} = :file.position(io, :cur)
     case read_record_size(io) do
       {:error, {:corrupt, :eof}} ->
-        index
+        {index, record_id - 1}
       {:error, _} = err ->
         err
       record_size ->
