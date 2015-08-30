@@ -131,6 +131,18 @@ defmodule LogCrate do
     GenServer.call(crate_pid, {:read, record_id})
   end
 
+  @doc """
+  Retrieves the range of record ids for the records stored in the crate. This
+  may not be 0..N if old segments have been deleted from the crate.
+
+  Returns:
+    * `nil` - the crate is empty
+    * `first..last` - the range of record ids
+  """
+  @spec range(pid) :: nil | Range.t
+  def range(crate_pid) do
+    GenServer.call(crate_pid, :range)
+  end
 
   #
   # GenServer callbacks
@@ -201,6 +213,16 @@ defmodule LogCrate do
     end
 
     {:noreply, crate}
+  end
+
+  def handle_call(:range, _from, %LogCrate{} = crate) do
+    record_ids = Dict.keys(crate.index)
+    if Enum.empty?(record_ids) do
+      range = nil
+    else
+      range = Enum.min(record_ids)..Enum.max(record_ids)
+    end
+    {:reply, range, crate}
   end
 
 

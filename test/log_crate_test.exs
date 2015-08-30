@@ -75,6 +75,16 @@ defmodule LogCrateTest do
     assert :ok == LogCrate.close(c)
   end
 
+  test "it reports the stored range" do
+    with_new_crate(fn(c) ->
+      assert nil == LogCrate.range(c)
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 0..0 == LogCrate.range(c)
+      assert 1 == LogCrate.append(c, "789abcd")
+      assert 0..1 == LogCrate.range(c)
+    end)
+  end
+
   # create an empty crate
 #  defp mk_crate do
 #    mk_crate(tmpdir)
