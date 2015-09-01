@@ -254,6 +254,21 @@ defmodule LogCrate do
     {:noreply, crate}
   end
 
+  # event from the Writer when there was a problem comitting to disk
+  def handle_cast({:error_append, record_id, reason}, %LogCrate{} = crate) do
+    crate = case :queue.out(crate.in_flight_appends) do
+      {{:value, caller}, new_queue} ->
+        # notify the caller
+        GenServer.reply(caller, {:error, reason})
+        %{crate | in_flight_appends: new_queue}
+
+      {:empty, _new_queue} ->
+        Logger.error("BUG LogCrate got error from writer but in_flight_appends queue is empty. record_id=#{inspect record_id}")
+    end
+
+    {:noreply, crate}
+  end
+
   # event from the Writer when it has rolled over to a new segment
   def handle_cast({:did_roll, _new_segment_id}, %LogCrate{} = crate) do
     {:noreply, crate}
