@@ -9,20 +9,26 @@ defmodule LogCrate.Writer do
   use GenServer
 
   @opaque t :: %__MODULE__{}
-  defstruct crate_pid:  nil,
-            config:     nil,
-            segment_id: nil,
-            pos:        nil,
-            io:         nil
+  defstruct crate_pid:      nil,
+            config:         nil,
+            segment_id:     nil,
+            next_record_id: nil,
+            pos:            nil,
+            io:             nil
 
-  @spec start_link(pid, Config.t, :create | :open, integer) :: GenServer.on_start
-  def start_link(crate_pid, config, mode, segment_id) do
-    GenServer.start_link(__MODULE__, {crate_pid, config, mode, segment_id})
+  @spec start_link(pid, Config.t, :create) :: GenServer.on_start
+  def start_link(crate_pid, config, :create) do
+    GenServer.start_link(__MODULE__, {crate_pid, config, :create})
   end
 
-  @spec append(pid, integer, binary) :: :ok
-  def append(writer_pid, record_id, value) do
-    GenServer.cast(writer_pid, {:append, record_id, value})
+  @spec start_link(pid, Config.t, :open, integer, integer) :: GenServer.on_start
+  def start_link(crate_pid, config, :open, segment_id, next_record_id) do
+    GenServer.start_link(__MODULE__, {crate_pid, config, :open, segment_id, next_record_id})
+  end
+
+  @spec append(pid, binary) :: :ok
+  def append(writer_pid, value) do
+    GenServer.cast(writer_pid, {:append, value})
   end
 
   @spec close(pid) :: :ok
@@ -35,15 +41,28 @@ defmodule LogCrate.Writer do
   # GenServer callbacks
   #
 
-  def init({crate_pid, config, mode, segment_id}) do
+  def init({crate_pid, config, :create}) do
     writer = %Writer{
-      crate_pid:  crate_pid,
-      config:     config,
-      segment_id: segment_id,
-      pos:        0,
-      io:         nil,
+      crate_pid:      crate_pid,
+      config:         config,
+      segment_id:     0,
+      next_record_id: 0,
+      pos:            0,
+      io:             nil,
     }
-    {:ok, {writer, mode, segment_id}, 0}
+    {:ok, {writer, :create}, 0}
+  end
+
+  def init({crate_pid, config, :open, segment_id, next_record_id}) do
+    writer = %Writer{
+      crate_pid:      crate_pid,
+      config:         config,
+      segment_id:     segment_id,
+      next_record_id: next_record_id,
+      pos:            0,
+      io:             nil,
+    }
+    {:ok, {writer, :open}, 0}
   end
 
   def terminate(_reason, writer) do
@@ -53,18 +72,22 @@ defmodule LogCrate.Writer do
     :ok
   end
 
-  def handle_info(:timeout, {%Writer{} = writer, :create, 0}) do
+  def handle_info(:timeout, {%Writer{} = writer, :create}) do
     {:noreply, writer}
   end
 
-  def handle_info(:timeout, {%Writer{} = writer, :open, segment_id}) do
-    {:ok, io} = File.open(segment_filename(writer.config.dir, segment_id), [:read, :write])
+  def handle_info(:timeout, {%Writer{} = writer, :open}) do
+    {:ok, io} = File.open(segment_filename(writer.config.dir, writer.segment_id), [:read, :write])
     {:ok, pos} = :file.position(io, :eof)
     writer = %{writer | io: io, pos: pos}
     {:noreply, writer}
   end
 
-  def handle_cast({:append, record_id, value}, %Writer{} = writer) do
+  def handle_cast({:append, value}, %Writer{} = writer) do
+    # reserve a record id
+    record_id = writer.next_record_id
+    next_record_id = record_id + 1
+
     # prepare the record
     header = <<byte_size(value)::size(32)>>
     data = [header, value]
@@ -80,7 +103,7 @@ defmodule LogCrate.Writer do
     writer = case IO.binwrite(writer.io, data) do
       :ok ->
         notify(writer, {:did_append, writer.segment_id, record_id, fpos, data_size})
-        %{writer | pos: writer.pos + data_size}
+        %{writer | pos: writer.pos + data_size, next_record_id: next_record_id}
 
       {:error, reason} ->
         Logger.error "Failed to write value #{inspect reason}"

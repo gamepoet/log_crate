@@ -21,11 +21,9 @@ defmodule LogCrate do
 
   @opaque t :: %__MODULE__{
     config:         Config.t,
-    next_record_id: integer,
   }
   defstruct config:            nil,
             index:             nil,
-            next_record_id:    nil,
             in_flight_appends: nil,
             writer:            nil
 
@@ -152,7 +150,6 @@ defmodule LogCrate do
     crate = %LogCrate{
       config:            config,
       index:             HashDict.new,
-      next_record_id:       0,
       in_flight_appends: :queue.new,
     }
     {:ok, {init_mode, crate}, 0}
@@ -165,7 +162,7 @@ defmodule LogCrate do
   # initialization that creates a new crate
   def handle_info(:timeout, {:create, %LogCrate{} = crate}) do
     File.mkdir_p!(crate.config.dir)
-    {:ok, writer} = Writer.start_link(self, crate.config, :create, 0)
+    {:ok, writer} = Writer.start_link(self, crate.config, :create)
     crate = %{crate | writer: writer}
     {:noreply, crate}
   end
@@ -178,9 +175,10 @@ defmodule LogCrate do
     {index, final_segment_id, final_record_id} = Enum.reduce(files, {crate.index, nil, nil}, fn(file, {index, _final_segment_id, _final_record_id}) ->
       load_segment(index, Path.join(crate.config.dir, file))
     end)
+    next_record_id = final_record_id + 1
 
-    {:ok, writer} = Writer.start_link(self, crate.config, :open, final_segment_id)
-    crate = %{crate | index: index, next_record_id: final_record_id + 1, writer: writer}
+    {:ok, writer} = Writer.start_link(self, crate.config, :open, final_segment_id, next_record_id)
+    crate = %{crate | index: index, writer: writer}
     {:noreply, crate}
   end
 
@@ -195,10 +193,9 @@ defmodule LogCrate do
   end
 
   def handle_call({:append, value}, from, %LogCrate{} = crate) do
-    record_id = crate.next_record_id
-    Writer.append(crate.writer, record_id, value)
+    Writer.append(crate.writer, value)
     new_queue = :queue.in(from, crate.in_flight_appends)
-    crate = %{crate | next_record_id: crate.next_record_id + 1, in_flight_appends: new_queue}
+    crate = %{crate | in_flight_appends: new_queue}
 
     {:noreply, crate}
   end
