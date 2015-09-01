@@ -105,15 +105,24 @@ defmodule LogCrate do
   end
 
   @doc """
-  Appends the given value to the crate and assigns it a record id.
+  Appends the given value or values to the crate and assigns them record ids.
 
   Returns:
-    * `record_id` - the id assigned to the record if successful
+    * `record_id` - the id assigned to the record if successful (non-list form)
+    * `[record_id]` - the ids assigned to the records if successful (list form)
     * `{:error, reason}` - appending was unsuccessful
   """
-  @spec append(pid, value) :: record_id | {:error, any}
-  def append(crate_pid, value) do
-    GenServer.call(crate_pid, {:append, value})
+  @spec append(pid, [value] | value) :: [record_id] | record_id | {:error, any}
+  def append(crate_pid, values) when is_list(values) do
+    GenServer.call(crate_pid, {:append, values})
+  end
+  def append(crate_pid, value) when is_binary(value) do
+    case append(crate_pid, [value]) do
+      {:error, _} = err ->
+        err
+      [record_id] ->
+        record_id
+    end
   end
 
   @doc """
@@ -192,8 +201,8 @@ defmodule LogCrate do
     {:reply, result, crate}
   end
 
-  def handle_call({:append, value}, from, %LogCrate{} = crate) do
-    Writer.append(crate.writer, value)
+  def handle_call({:append, values}, from, %LogCrate{} = crate) when is_list(values) do
+    Writer.append(crate.writer, values)
     new_queue = :queue.in(from, crate.in_flight_appends)
     crate = %{crate | in_flight_appends: new_queue}
 
@@ -224,15 +233,21 @@ defmodule LogCrate do
 
 
   # event from the Writer when a record has been committed to disk
-  def handle_cast({:did_append, segment_id, record_id, pos, size}, %LogCrate{} = crate) do
+  def handle_cast({:did_append, segment_id, record_ids, positions, sizes}, %LogCrate{} = crate) do
     crate = case :queue.out(crate.in_flight_appends) do
       {{:value, caller}, new_queue} ->
-        GenServer.reply(caller, record_id)
-        new_index = Dict.put(crate.index, record_id, IndexEntry.new(segment_id, pos, size))
+        # notify the caller
+        GenServer.reply(caller, record_ids)
+
+        # update the index
+        metadata = List.zip([record_ids, positions, sizes])
+        new_index = Enum.reduce(metadata, crate.index, fn({record_id, fpos, size}, index) ->
+          Dict.put(index, record_id, IndexEntry.new(segment_id, fpos, size))
+        end)
         %{crate | in_flight_appends: new_queue, index: new_index}
 
       {:empty, _new_queue} ->
-        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} record_id=#{record_id} pos=#{pos} size=#{size}")
+        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} record_ids=#{inspect record_ids} positions=#{inspect positions} sizes=#{inspect sizes}")
         throw(:bug)
     end
 

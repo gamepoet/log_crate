@@ -26,9 +26,9 @@ defmodule LogCrate.Writer do
     GenServer.start_link(__MODULE__, {crate_pid, config, :open, segment_id, next_record_id})
   end
 
-  @spec append(pid, binary) :: :ok
-  def append(writer_pid, value) do
-    GenServer.cast(writer_pid, {:append, value})
+  @spec append(pid, [binary]) :: :ok
+  def append(writer_pid, values) do
+    GenServer.cast(writer_pid, {:append, values})
   end
 
   @spec close(pid) :: :ok
@@ -83,27 +83,43 @@ defmodule LogCrate.Writer do
     {:noreply, writer}
   end
 
-  def handle_cast({:append, value}, %Writer{} = writer) do
-    # reserve a record id
+  def handle_cast({:append, values}, %Writer{} = writer) do
+    # reserve the record ids
     record_id = writer.next_record_id
-    next_record_id = record_id + 1
+    record_count = length(values)
+    next_record_id = record_id + record_count
 
-    # prepare the record
-    header = <<byte_size(value)::size(32)>>
-    data = [header, value]
-    data_size = byte_size(header) + byte_size(value)
+    # prepare the records for writing
+    records = Enum.map(values, fn(value) ->
+      header = <<byte_size(value)::size(32)>>
+      [header, value]
+    end)
+    write_size = IO.iodata_length(records)
+
+    # compute record sizes
+    record_sizes = Enum.map(records, fn(record) ->
+      IO.iodata_length(record)
+    end)
 
     # roll a new segment if needed
-    writer = maybe_roll(writer, record_id, data_size)
+    writer = maybe_roll(writer, record_id, write_size)
+    fpos_start = writer.pos
 
-    # figure out where we are in the file
-    fpos = writer.pos
+    # derive file positions
+    {fpos_list, _} = Enum.reduce(record_sizes, {[], fpos_start}, fn(size, {accum, pos}) ->
+      {[pos | accum], pos + size}
+    end)
+    fpos_list = Enum.reverse(fpos_list)
+
+    # build the record ids
+    last_record_id = record_id + record_count - 1
+    record_ids = Enum.to_list(record_id..last_record_id)
 
     # write the record to disk
-    writer = case IO.binwrite(writer.io, data) do
+    writer = case IO.binwrite(writer.io, records) do
       :ok ->
-        notify(writer, {:did_append, writer.segment_id, record_id, fpos, data_size})
-        %{writer | pos: writer.pos + data_size, next_record_id: next_record_id}
+        notify(writer, {:did_append, writer.segment_id, record_ids, fpos_list, record_sizes})
+        %{writer | pos: writer.pos + write_size, next_record_id: next_record_id}
 
       {:error, reason} ->
         Logger.error "Failed to write value #{inspect reason}"

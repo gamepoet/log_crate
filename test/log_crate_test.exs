@@ -40,11 +40,11 @@ defmodule LogCrateTest do
     assert {:error, :directory_missing} == LogCrate.open(dir)
   end
 
-#  test "it can append records in batches" do
-#    c = with_new_crate(fn(c) ->
-#      assert [0,1,2,3] == LogCrate.append(c, ["a", "batch", "of", "records"])
-#    end)
-#  end
+  test "it can append records in batches" do
+    with_new_crate(fn(c) ->
+      assert [0,1,2,3] == LogCrate.append(c, ["a", "batch", "of", "records"])
+    end)
+  end
 
   test "it rolls a new segment when the max size is exceeded" do
     dir = tmpdir
