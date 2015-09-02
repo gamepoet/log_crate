@@ -264,6 +264,7 @@ defmodule LogCrate do
 
       {:empty, _new_queue} ->
         Logger.error("BUG LogCrate got error from writer but in_flight_appends queue is empty. record_id=#{inspect record_id}")
+        throw(:bug)
     end
 
     {:noreply, crate}
