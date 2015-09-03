@@ -9,6 +9,7 @@ defmodule LogCrate do
   until it reached a maximum size at which point a new segment file is rolled.
   """
   alias __MODULE__
+  alias __MODULE__.BatchReader
   alias __MODULE__.Config
   alias __MODULE__.IndexEntry
   alias __MODULE__.Reader
@@ -139,6 +140,21 @@ defmodule LogCrate do
   end
 
   @doc """
+  Retrieves the values of records stored started with the given starting record
+  id. All records up through the max byte size or the end of the crate will be
+  retrieved.
+
+  Returns:
+    * `[]` - the starting record id is beyond the end of the crate
+    * `[value]` - the values stored in the records if successful
+    * `{:error, reason}` - the read was unsuccessful
+  """
+  @spec read(pid, record_id, integer) :: [value] | {:error, any}
+  def read(crate_pid, record_id_start, max_byte_size) do
+    GenServer.call(crate_pid, {:read, record_id_start, max_byte_size})
+  end
+
+  @doc """
   Retrieves the range of record ids for the records stored in the crate. This
   may not be 0..N if old segments have been deleted from the crate.
 
@@ -215,7 +231,26 @@ defmodule LogCrate do
         GenServer.reply(from, :not_found)
 
       entry ->
-        Reader.start_link(from, crate.config.dir, entry.segment_id, entry.pos, entry.size)
+        Reader.start_link(from, crate.config.dir, entry.segment_id, [entry], false)
+    end
+
+    {:noreply, crate}
+  end
+
+  def handle_call({:read, record_id_start, max_byte_size}, from, %LogCrate{} = crate) do
+    case Dict.get(crate.index, record_id_start) do
+      nil ->
+        # starting record doesn't exist, so bail
+        GenServer.reply(from, :not_found)
+
+      _ ->
+        # get the reading list
+        case get_read_list(crate.index, record_id_start, max_byte_size) do
+          [] ->
+            GenServer.reply(from, [])
+          read_list ->
+            BatchReader.start_link(from, crate.config.dir, read_list)
+        end
     end
 
     {:noreply, crate}
@@ -275,6 +310,27 @@ defmodule LogCrate do
     {:noreply, crate}
   end
 
+  # gets a list of records to read that satifies the given read request
+  defp get_read_list(index, record_id_start, max_bytes) do
+    get_read_list(index, record_id_start, max_bytes, [])
+  end
+  defp get_read_list(index, record_id_start, max_bytes, matches) do
+    case Dict.get(index, record_id_start) do
+      nil ->
+        # no more records in the crate
+        matches |> Enum.reverse
+
+      entry ->
+        # is the record small enough to satisfy max bytes?
+        size = entry.size - 4 # remove header size
+        if size > max_bytes do
+          # record is too big
+          matches |> Enum.reverse
+        else
+          get_read_list(index, record_id_start + 1, max_bytes - size, [entry | matches])
+        end
+    end
+  end
 
   defp load_segment(index, filename) do
     {:ok, io} = File.open(filename, [:read])

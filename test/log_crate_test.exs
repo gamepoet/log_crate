@@ -1,5 +1,5 @@
 defmodule LogCrateTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   test "it creates an empty crate" do
     with_new_crate(fn(c) ->
@@ -66,6 +66,7 @@ defmodule LogCrateTest do
       assert 1 == LogCrate.append(c, "789abcd")
       assert 1 == File.ls!("#{dir}/") |> Enum.count
       assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == File.ls!("#{dir}/") |> Enum.count
     end)
 
     c = LogCrate.open(dir)
@@ -82,6 +83,58 @@ defmodule LogCrateTest do
       assert 0..0 == LogCrate.range(c)
       assert 1 == LogCrate.append(c, "789abcd")
       assert 0..1 == LogCrate.range(c)
+    end)
+  end
+
+  test "it can read in batches" do
+    with_new_crate(fn(c) ->
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 1 == LogCrate.append(c, "789abcd")
+      assert 2 == LogCrate.append(c, "something much larger")
+
+      assert ["0123456", "789abcd", "something much larger"] == LogCrate.read(c, 0, 1024)
+      assert ["789abcd", "something much larger"] == LogCrate.read(c, 1, 1024)
+    end)
+  end
+
+  test "it spans segments for batched reads" do
+    dir = tmpdir
+    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 1 == LogCrate.append(c, "789abcd")
+      assert 1 == File.ls!("#{dir}/") |> Enum.count
+      assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == File.ls!("#{dir}/") |> Enum.count
+      assert 3 == LogCrate.append(c, "more data")
+
+      assert ["789abcd", "something much larger", "more data"] == LogCrate.read(c, 1, 1024)
+    end)
+  end
+
+  test "it respects the max bytes limit for batched reads" do
+    dir = tmpdir
+    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
+      assert 0 == LogCrate.append(c, "0123456")
+      assert 1 == LogCrate.append(c, "789abcd")
+      assert 1 == File.ls!("#{dir}/") |> Enum.count
+      assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == File.ls!("#{dir}/") |> Enum.count
+      assert 3 == LogCrate.append(c, "more data")
+
+      assert [] == LogCrate.read(c, 0, 3)
+      assert ["0123456"] == LogCrate.read(c, 0, 7)
+      assert ["0123456"] == LogCrate.read(c, 0, 13)
+      assert ["0123456", "789abcd"] == LogCrate.read(c, 0, 14)
+      assert ["789abcd"] == LogCrate.read(c, 1, 10)
+      assert ["789abcd", "something much larger"] == LogCrate.read(c, 1, 30)
+    end)
+  end
+
+  test "it fails a batched read if the starting offset is unknown" do
+    with_new_crate(fn(c) ->
+      assert :not_found == LogCrate.read(c, 0, 1024)
+      assert 0 == LogCrate.append(c, "0123456")
+      assert :not_found == LogCrate.read(c, 1, 1024)
     end)
   end
 
