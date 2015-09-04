@@ -1,5 +1,5 @@
 defmodule LogCrateTest do
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   test "it creates an empty crate" do
     with_new_crate(fn(c) ->
