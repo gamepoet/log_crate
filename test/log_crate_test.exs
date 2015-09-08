@@ -14,24 +14,24 @@ defmodule LogCrateTest do
 
   test "it can append records and read them back" do
     with_new_crate(fn(c) ->
-      assert 0 == LogCrate.append(c, "hello")
-      assert 1 == LogCrate.append(c, "world")
-      assert "hello" == LogCrate.read(c, 0)
-      assert "world" == LogCrate.read(c, 1)
+      assert 0 == LogCrate.append(c, mk_record("hello"))
+      assert 1 == LogCrate.append(c, mk_record("world"))
+      assert mk_record("hello") == LogCrate.read(c, 0)
+      assert mk_record("world") == LogCrate.read(c, 1)
     end)
   end
 
   test "it opens saved crates" do
     dir = tmpdir
     with_new_crate(dir, fn(c) ->
-      0 = LogCrate.append(c, "some")
-      1 = LogCrate.append(c, "data")
+      0 = LogCrate.append(c, mk_record("some"))
+      1 = LogCrate.append(c, mk_record("data"))
     end)
 
     c = LogCrate.open(dir)
-    assert "some" == LogCrate.read(c, 0)
-    assert "data" == LogCrate.read(c, 1)
-    assert 2 == LogCrate.append(c, "more!")
+    assert mk_record("some") == LogCrate.read(c, 0)
+    assert mk_record("data") == LogCrate.read(c, 1)
+    assert 2 == LogCrate.append(c, mk_record("more!"))
     assert :ok == LogCrate.close(c)
   end
 
@@ -42,98 +42,98 @@ defmodule LogCrateTest do
 
   test "it can append records in batches" do
     with_new_crate(fn(c) ->
-      assert [0,1,2,3] == LogCrate.append(c, ["a", "batch", "of", "records"])
+      assert [0,1,2,3] == LogCrate.append(c, [mk_record("a"), mk_record("batch"), mk_record("of"), mk_record("records")])
     end)
   end
 
   test "it rolls a new segment when the max size is exceeded" do
     dir = tmpdir
     with_new_crate(dir, [segment_max_size: 8], fn(c) ->
-      assert 0 == LogCrate.append(c, "0123456")
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
       assert 1 == File.ls!("#{dir}/") |> Enum.count
-      assert 1 == LogCrate.append(c, "lots and lots more data to push us over");
+      assert 1 == LogCrate.append(c, mk_record("lots and lots more data to push us over"))
       assert 2 == File.ls!("#{dir}/") |> Enum.count
 
-      assert "0123456" == LogCrate.read(c, 0)
-      assert "lots and lots more data to push us over" == LogCrate.read(c, 1)
+      assert mk_record("0123456") == LogCrate.read(c, 0)
+      assert mk_record("lots and lots more data to push us over") == LogCrate.read(c, 1)
     end)
   end
 
   test "it properly opens crates with multiple segments" do
     dir = tmpdir
-    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
-      assert 0 == LogCrate.append(c, "0123456")
-      assert 1 == LogCrate.append(c, "789abcd")
+    with_new_crate(dir, [segment_max_size: 90], fn(c) ->
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
+      assert 1 == LogCrate.append(c, mk_record("789abcd"))
       assert 1 == File.ls!("#{dir}/") |> Enum.count
-      assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == LogCrate.append(c, mk_record("something much larger"))
       assert 2 == File.ls!("#{dir}/") |> Enum.count
     end)
 
     c = LogCrate.open(dir)
-    assert "0123456" == LogCrate.read(c, 0)
-    assert "789abcd" == LogCrate.read(c, 1)
-    assert "something much larger" == LogCrate.read(c, 2)
+    assert mk_record("0123456") == LogCrate.read(c, 0)
+    assert mk_record("789abcd") == LogCrate.read(c, 1)
+    assert mk_record("something much larger") == LogCrate.read(c, 2)
     assert :ok == LogCrate.close(c)
   end
 
   test "it reports the stored range" do
     with_new_crate(fn(c) ->
       assert nil == LogCrate.range(c)
-      assert 0 == LogCrate.append(c, "0123456")
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
       assert 0..0 == LogCrate.range(c)
-      assert 1 == LogCrate.append(c, "789abcd")
+      assert 1 == LogCrate.append(c, mk_record("789abcd"))
       assert 0..1 == LogCrate.range(c)
     end)
   end
 
   test "it can read in batches" do
     with_new_crate(fn(c) ->
-      assert 0 == LogCrate.append(c, "0123456")
-      assert 1 == LogCrate.append(c, "789abcd")
-      assert 2 == LogCrate.append(c, "something much larger")
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
+      assert 1 == LogCrate.append(c, mk_record("789abcd"))
+      assert 2 == LogCrate.append(c, mk_record("something much larger"))
 
-      assert ["0123456", "789abcd", "something much larger"] == LogCrate.read(c, 0, 1024)
-      assert ["789abcd", "something much larger"] == LogCrate.read(c, 1, 1024)
+      assert [mk_record("0123456"), mk_record("789abcd"), mk_record("something much larger")] == LogCrate.read(c, 0, 1024)
+      assert [mk_record("789abcd"), mk_record("something much larger")] == LogCrate.read(c, 1, 1024)
     end)
   end
 
   test "it spans segments for batched reads" do
     dir = tmpdir
-    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
-      assert 0 == LogCrate.append(c, "0123456")
-      assert 1 == LogCrate.append(c, "789abcd")
+    with_new_crate(dir, [segment_max_size: 90], fn(c) ->
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
+      assert 1 == LogCrate.append(c, mk_record("789abcd"))
       assert 1 == File.ls!("#{dir}/") |> Enum.count
-      assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == LogCrate.append(c, mk_record("something much larger"))
       assert 2 == File.ls!("#{dir}/") |> Enum.count
-      assert 3 == LogCrate.append(c, "more data")
+      assert 3 == LogCrate.append(c, mk_record("more data"))
 
-      assert ["789abcd", "something much larger", "more data"] == LogCrate.read(c, 1, 1024)
+      assert [mk_record("789abcd"), mk_record("something much larger"), mk_record("more data")] == LogCrate.read(c, 1, 1024)
     end)
   end
 
   test "it respects the max bytes limit for batched reads" do
     dir = tmpdir
-    with_new_crate(dir, [segment_max_size: 64], fn(c) ->
-      assert 0 == LogCrate.append(c, "0123456")
-      assert 1 == LogCrate.append(c, "789abcd")
+    with_new_crate(dir, [segment_max_size: 90], fn(c) ->
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
+      assert 1 == LogCrate.append(c, mk_record("789abcd"))
       assert 1 == File.ls!("#{dir}/") |> Enum.count
-      assert 2 == LogCrate.append(c, "something much larger")
+      assert 2 == LogCrate.append(c, mk_record("something much larger"))
       assert 2 == File.ls!("#{dir}/") |> Enum.count
-      assert 3 == LogCrate.append(c, "more data")
+      assert 3 == LogCrate.append(c, mk_record("more data"))
 
       assert [] == LogCrate.read(c, 0, 3)
-      assert ["0123456"] == LogCrate.read(c, 0, 7)
-      assert ["0123456"] == LogCrate.read(c, 0, 13)
-      assert ["0123456", "789abcd"] == LogCrate.read(c, 0, 14)
-      assert ["789abcd"] == LogCrate.read(c, 1, 10)
-      assert ["789abcd", "something much larger"] == LogCrate.read(c, 1, 30)
+      assert [mk_record("0123456")] == LogCrate.read(c, 0, 7)
+      assert [mk_record("0123456")] == LogCrate.read(c, 0, 13)
+      assert [mk_record("0123456"), mk_record("789abcd")] == LogCrate.read(c, 0, 14)
+      assert [mk_record("789abcd")] == LogCrate.read(c, 1, 10)
+      assert [mk_record("789abcd"), mk_record("something much larger")] == LogCrate.read(c, 1, 30)
     end)
   end
 
   test "it fails a batched read if the starting offset is unknown" do
     with_new_crate(fn(c) ->
       assert :not_found == LogCrate.read(c, 0, 1024)
-      assert 0 == LogCrate.append(c, "0123456")
+      assert 0 == LogCrate.append(c, mk_record("0123456"))
       assert :not_found == LogCrate.read(c, 1, 1024)
     end)
   end
@@ -172,5 +172,13 @@ defmodule LogCrateTest do
     dir = tmpdir
     File.mkdir_p!(dir)
     dir
+  end
+
+  defp sha1(data) when is_binary(data) do
+    :crypto.hash(:sha, data)
+  end
+
+  defp mk_record(data) when is_binary(data) do
+    {sha1(data), data}
   end
 end

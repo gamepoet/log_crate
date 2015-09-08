@@ -13,11 +13,13 @@ defmodule LogCrate do
   alias __MODULE__.Config
   alias __MODULE__.IndexEntry
   alias __MODULE__.Reader
+  alias __MODULE__.RecordHeader
   alias __MODULE__.Writer
   require Logger
   use GenServer
 
   @type record_id :: integer
+  @type digest :: binary
   @type value :: binary
 
   @opaque t :: %__MODULE__{
@@ -113,11 +115,11 @@ defmodule LogCrate do
     * `[record_id]` - the ids assigned to the records if successful (list form)
     * `{:error, reason}` - appending was unsuccessful
   """
-  @spec append(pid, [value] | value) :: [record_id] | record_id | {:error, any}
+  @spec append(pid, [{digest, value}] | {digest, value}) :: [record_id] | record_id | {:error, any}
   def append(crate_pid, values) when is_list(values) do
     GenServer.call(crate_pid, {:append, values})
   end
-  def append(crate_pid, value) when is_binary(value) do
+  def append(crate_pid, {digest, data} = value) when is_binary(digest) and is_binary(data) do
     case append(crate_pid, [value]) do
       {:error, _} = err ->
         err
@@ -130,11 +132,11 @@ defmodule LogCrate do
   Retrieves the value of the record stored with the given record id.
 
   Returns:
-    * `value` - the value stored in the record if successful
+    * `{digest, value}` - the digest and value stored in the record if successful
     * `:not_found` - there is no record for the requested id in the crate
     * `{:error, reason}` - the read was unsuccessful
   """
-  @spec read(pid, record_id) :: value | :not_found | {:error, any}
+  @spec read(pid, record_id) :: {digest, value} | :not_found | {:error, any}
   def read(crate_pid, record_id) do
     GenServer.call(crate_pid, {:read, record_id})
   end
@@ -146,10 +148,10 @@ defmodule LogCrate do
 
   Returns:
     * `[]` - the starting record id is beyond the end of the crate
-    * `[value]` - the values stored in the records if successful
+    * `[{digest, value}]` - the digests and values stored in the records if successful
     * `{:error, reason}` - the read was unsuccessful
   """
-  @spec read(pid, record_id, integer) :: [value] | {:error, any}
+  @spec read(pid, record_id, integer) :: [{digest, value}] | {:error, any}
   def read(crate_pid, record_id_start, max_byte_size) do
     GenServer.call(crate_pid, {:read, record_id_start, max_byte_size})
   end
@@ -268,21 +270,21 @@ defmodule LogCrate do
 
 
   # event from the Writer when a record has been committed to disk
-  def handle_cast({:did_append, segment_id, record_ids, positions, sizes}, %LogCrate{} = crate) do
+  def handle_cast({:did_append, segment_id, record_ids, positions, sizes, digests}, %LogCrate{} = crate) do
     crate = case :queue.out(crate.in_flight_appends) do
       {{:value, caller}, new_queue} ->
         # notify the caller
         GenServer.reply(caller, record_ids)
 
         # update the index
-        metadata = List.zip([record_ids, positions, sizes])
-        new_index = Enum.reduce(metadata, crate.index, fn({record_id, fpos, size}, index) ->
-          Dict.put(index, record_id, IndexEntry.new(segment_id, fpos, size))
+        metadata = List.zip([record_ids, positions, sizes, digests])
+        new_index = Enum.reduce(metadata, crate.index, fn({record_id, fpos, size, digest}, index) ->
+          Dict.put(index, record_id, IndexEntry.new(segment_id, fpos, size, digest))
         end)
         %{crate | in_flight_appends: new_queue, index: new_index}
 
       {:empty, _new_queue} ->
-        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} record_ids=#{inspect record_ids} positions=#{inspect positions} sizes=#{inspect sizes}")
+        Logger.error("BUG LogCrate got commit from writer but in_flight_appends queue is empty. segment_id=#{segment_id} record_ids=#{inspect record_ids} positions=#{inspect positions} sizes=#{inspect sizes} digests=#{inspect digests}")
         throw(:bug)
     end
 
@@ -322,7 +324,7 @@ defmodule LogCrate do
 
       entry ->
         # is the record small enough to satisfy max bytes?
-        size = entry.size - 4 # remove header size
+        size = entry.size - RecordHeader.size
         if size > max_bytes do
           # record is too big
           matches |> Enum.reverse
@@ -359,30 +361,32 @@ defmodule LogCrate do
 
   defp load_record(index, io, segment_id, record_id) do
     {:ok, pos} = :file.position(io, :cur)
-    case read_record_size(io) do
-      {:error, {:corrupt, :eof}} ->
+    case read_record_header(io) do
+      :eof ->
         {index, record_id - 1}
       {:error, _} = err ->
         err
-      record_size ->
-        case read_record_content(io, record_size) do
+      {size, digest} ->
+        case read_record_content(io, size) do
           {:error, _} = err ->
             err
           _record_content ->
-            index = Dict.put(index, record_id, IndexEntry.new(segment_id, pos, record_size + 4))
+            total_size = RecordHeader.size + size
+            index = Dict.put(index, record_id, IndexEntry.new(segment_id, pos, total_size, digest))
             load_record(index, io, segment_id, record_id + 1)
         end
     end
   end
 
-  defp read_record_size(io) do
-    case IO.binread(io, 4) do
+  defp read_record_header(io) do
+    case IO.binread(io, RecordHeader.size) do
+      :eof ->
+        :eof
       {:error, _} = err ->
         err
-      :eof ->
-        {:error, {:corrupt, :eof}}
-      <<record_size::integer-size(32)>> ->
-        record_size
+      header ->
+        {size, digest, ""} = RecordHeader.decode(header)
+        {size, digest}
     end
   end
 

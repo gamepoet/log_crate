@@ -1,5 +1,6 @@
 defmodule LogCrate.Reader do
   alias __MODULE__
+  alias LogCrate.RecordHeader
   use GenServer
 
   defstruct reply_to:   nil,
@@ -32,23 +33,31 @@ defmodule LogCrate.Reader do
     basename = :io_lib.format("~16.16.0b.dat", [reader.segment_id]) |> IO.iodata_to_binary
     path = "#{reader.dir}/#{basename}"
 
-    data_list = Enum.map(reader.entries, fn(entry) ->
-      # skip past the header
-      pos = entry.pos + 4
-      size = entry.size - 4
+    values = Enum.map(reader.entries, fn(entry) ->
+      # read the record from the file
+      {:ok, data} = File.open(path, [:read], fn(io) ->
+        {:ok, data} = :file.pread(io, entry.pos, entry.size)
+        data
+      end)
 
-      # read
-      {:ok, io} = File.open(path)
-      {:ok, data} = :file.pread(io, pos, size)
+      # split up the content
+      case RecordHeader.decode(data) do
+        {size, digest, value} ->
+          # verify header (size, digest)
+          ^size   = entry.size - RecordHeader.size
+          ^digest = entry.digest
 
-      data
+          {digest, value}
+        {:error, :malformed} ->
+          throw(:bug)
+      end
     end)
 
     # report result
     if reader.batch do
-      GenServer.cast(reader.reply_to, {:read_result, reader.segment_id, data_list})
+      GenServer.cast(reader.reply_to, {:read_result, reader.segment_id, values})
     else
-      GenServer.reply(reader.reply_to, data_list |> List.first)
+      GenServer.reply(reader.reply_to, values |> List.first)
     end
     {:stop, :normal, reader}
   end

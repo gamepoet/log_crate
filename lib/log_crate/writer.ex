@@ -5,6 +5,7 @@ defmodule LogCrate.Writer do
   """
   alias __MODULE__
   alias LogCrate.Config
+  alias LogCrate.RecordHeader
   require Logger
   use GenServer
 
@@ -26,7 +27,7 @@ defmodule LogCrate.Writer do
     GenServer.start_link(__MODULE__, {crate_pid, config, :open, segment_id, next_record_id})
   end
 
-  @spec append(pid, [binary]) :: :ok
+  @spec append(pid, [{binary, binary}]) :: :ok
   def append(writer_pid, values) do
     GenServer.cast(writer_pid, {:append, values})
   end
@@ -90,9 +91,8 @@ defmodule LogCrate.Writer do
     next_record_id = record_id + record_count
 
     # prepare the records for writing
-    records = Enum.map(values, fn(value) ->
-      header = <<byte_size(value)::size(32)>>
-      [header, value]
+    records = Enum.map(values, fn({digest, value}) ->
+      [record_header(digest, value), value]
     end)
     write_size = IO.iodata_length(records)
 
@@ -111,6 +111,9 @@ defmodule LogCrate.Writer do
     end)
     fpos_list = Enum.reverse(fpos_list)
 
+    # extract digests
+    digests = Enum.map(values, fn({digest, _}) -> digest end)
+
     # build the record ids
     last_record_id = record_id + record_count - 1
     record_ids = Enum.to_list(record_id..last_record_id)
@@ -118,7 +121,7 @@ defmodule LogCrate.Writer do
     # write the record to disk
     writer = case IO.binwrite(writer.io, records) do
       :ok ->
-        notify(writer, {:did_append, writer.segment_id, record_ids, fpos_list, record_sizes})
+        notify(writer, {:did_append, writer.segment_id, record_ids, fpos_list, record_sizes, digests})
         %{writer | pos: writer.pos + write_size, next_record_id: next_record_id}
 
       {:error, reason} ->
@@ -176,4 +179,7 @@ defmodule LogCrate.Writer do
     >>
   end
 
+  defp record_header(digest, value) do
+    RecordHeader.encode(byte_size(value), digest)
+  end
 end
